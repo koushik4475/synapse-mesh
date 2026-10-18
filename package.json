@@ -1,0 +1,23 @@
+{
+  "name": "synapse-mesh",
+  "version": "0.1.0",
+  "description": "Multi-Agent Autonomous LLM Execution Mesh with DAG Scheduling & Memory Vector Fabric",
+  "main": "dist/index.js",
+  "scripts": {
+    "test": "pytest",
+    "lint": "ruff check ."
+  },
+  "keywords": [
+    "agents",
+    "dag",
+    "vector-fabric",
+    "autonomous-mesh",
+    "llm"
+  ],
+  "author": "koushik4475 <koushik4475@gmail.com>",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ER-brocode/synapse-mesh.git"
+  }
+}
