@@ -1,6 +1,9 @@
 <div align="center">
 
-# ⚡ Synapse Mesh
+# Synapse Mesh | Multi-Agent LLM Orchestration with DAG Scheduling and Shared Memory
+
+Synapse Mesh is a Python project for coordinating multiple large language model (LLM) agents through a shared execution mesh. Its documented design combines DAG-based task scheduling, agent orchestration, and a vector-memory layer to support multi-step workflows. Explore the architecture and quick start if you are building or researching multi-agent AI systems.
+
 
 **Multi-Agent Autonomous LLM Execution Mesh with DAG Scheduling & Memory Vector Fabric**
 
