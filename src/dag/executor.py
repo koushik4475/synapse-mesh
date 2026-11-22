@@ -28,12 +28,10 @@ class StepExecutor:
 
         while retries_left >= 0:
             try:
-                # Look up handler
                 handler = self.handler_registry.get(node.action_type)
                 if not handler:
                     raise ValueError(f"No handler registered for action type: '{node.action_type}'")
 
-                # Run with timeout
                 result_output = await asyncio.wait_for(
                     handler(node, context),
                     timeout=node.timeout_seconds
@@ -55,7 +53,10 @@ class StepExecutor:
                 last_error = str(exc)
                 retries_left -= 1
                 logger.warning(
-                    f"Task {node.task_id} failed: {last_error}. Retries left: {max(retries_left, 0)}"
+                    "Task %s failed: %s. Retries left: %s",
+                    node.task_id,
+                    last_error,
+                    max(retries_left, 0),
                 )
                 if retries_left >= 0:
                     await asyncio.sleep(0.05 * (node.retry_count - retries_left + 1))
@@ -82,6 +83,8 @@ class ParallelDispatchEngine:
         max_concurrency: int = 8,
         shared_context: Optional[Dict[str, Any]] = None
     ):
+        if max_concurrency < 1:
+            raise ValueError("max_concurrency must be at least 1")
         self.planner = planner
         self.executor = executor
         self.max_concurrency = max_concurrency
@@ -100,51 +103,58 @@ class ParallelDispatchEngine:
 
         async def _run_guarded(task_node: TaskNode) -> TaskResult:
             async with self.semaphore:
-                # Merge outputs of completed dependency tasks into step context
                 step_ctx = dict(self.shared_context)
                 step_ctx["upstream_results"] = {
-                    dep_id: results[dep_id].output for dep_id in task_node.dependencies if dep_id in results
+                    dep_id: results[dep_id].output
+                    for dep_id in task_node.dependencies
+                    if dep_id in results
                 }
                 return await self.executor.execute_step(task_node, step_ctx)
 
         while len(completed_tasks) + len(failed_tasks) < total_nodes:
-            # 1. Schedule ready tasks
-            ready_nodes = self.planner.get_ready_tasks(completed_tasks)
-            for node in ready_nodes:
-                # Check if any dependencies failed - if so, fail/skip task
-                dep_failed = any(dep in failed_tasks for dep in node.dependencies)
-                if dep_failed:
+            made_progress = False
+
+            # A failed dependency can never satisfy get_ready_tasks(), so inspect
+            # all pending nodes and explicitly mark their descendants as skipped.
+            for node in self.planner.nodes.values():
+                if node.status != TaskStatus.PENDING:
+                    continue
+
+                if node.dependencies & failed_tasks:
                     node.status = TaskStatus.SKIPPED
-                    res = TaskResult(
+                    result = TaskResult(
                         task_id=node.task_id,
                         status=TaskStatus.SKIPPED,
                         error="Upstream dependency failed."
                     )
-                    node.result = res
-                    results[node.task_id] = res
+                    node.result = result
+                    results[node.task_id] = result
                     failed_tasks.add(node.task_id)
-                    continue
-
-                # Schedule execution
-                node.status = TaskStatus.RUNNING
-                fut = asyncio.create_task(_run_guarded(node))
-                active_futures[fut] = node.task_id
+                    made_progress = True
+                elif node.dependencies.issubset(completed_tasks):
+                    node.status = TaskStatus.RUNNING
+                    future = asyncio.create_task(_run_guarded(node))
+                    active_futures[future] = node.task_id
+                    made_progress = True
 
             if not active_futures:
-                # If no active tasks and uncompleted tasks remain, deadlock or unmet dependencies
+                if made_progress:
+                    # Newly skipped tasks may unblock the same decision for
+                    # their descendants on the next scheduler pass.
+                    continue
+                # Remaining nodes have unresolved dependencies or invalid state.
                 break
 
-            # 2. Wait for at least one active task to complete
             done, _ = await asyncio.wait(
                 active_futures.keys(),
                 return_when=asyncio.FIRST_COMPLETED
             )
 
-            for fut in done:
-                task_id = active_futures.pop(fut)
-                res: TaskResult = await fut
-                results[task_id] = res
-                if res.status == TaskStatus.COMPLETED:
+            for future in done:
+                task_id = active_futures.pop(future)
+                result = await future
+                results[task_id] = result
+                if result.status == TaskStatus.COMPLETED:
                     completed_tasks.add(task_id)
                 else:
                     failed_tasks.add(task_id)
