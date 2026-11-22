@@ -55,3 +55,32 @@ def test_hierarchical_memory_tiers():
     assert len(recalled) > 0
     contents = [r[0].content for r in recalled]
     assert any("database migration" in c for c in contents)
+
+
+def test_vector_store_rejects_non_finite_vectors_and_queries():
+    store = VectorStore(dimension=2)
+
+    with pytest.raises(ValueError, match="finite"):
+        store.add_entry(MemoryEntry(content="nan", vector=[float("nan"), 1.0]))
+
+    with pytest.raises(ValueError, match="finite"):
+        store.add_entry(MemoryEntry(content="infinite", vector=[float("inf"), 1.0]))
+
+    store.add_entry(MemoryEntry(content="valid", vector=[1.0, 0.0]))
+
+    with pytest.raises(ValueError, match="finite"):
+        store.search([float("nan"), 0.0])
+
+    with pytest.raises(ValueError, match="finite"):
+        store.search([0.0, float("-inf")])
+
+
+def test_vector_store_validates_dimension_and_top_k():
+    with pytest.raises(ValueError, match="dimension must be at least 1"):
+        VectorStore(dimension=0)
+
+    store = VectorStore(dimension=2)
+    with pytest.raises(ValueError, match="top_k must be non-negative"):
+        store.search([1.0, 0.0], top_k=-1)
+
+    assert store.search([1.0, 0.0], top_k=0) == []

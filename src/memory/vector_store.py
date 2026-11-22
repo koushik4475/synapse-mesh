@@ -13,6 +13,8 @@ class VectorStore:
     """In-memory numpy vector store supporting cosine similarity and top-k retrieval."""
 
     def __init__(self, dimension: int = 128):
+        if dimension < 1:
+            raise ValueError("Vector dimension must be at least 1")
         self.dimension = dimension
         self.entries: Dict[str, MemoryEntry] = {}
         self._matrix: Optional[np.ndarray] = None
@@ -25,6 +27,8 @@ class VectorStore:
             raise ValueError(
                 f"Vector dimension mismatch. Expected {self.dimension}, got {len(entry.vector)}"
             )
+        if not np.isfinite(np.asarray(entry.vector, dtype=np.float64)).all():
+            raise ValueError("Vector values must all be finite numbers")
         self.entries[entry.entry_id] = entry
         self._dirty = True
 
@@ -64,12 +68,17 @@ class VectorStore:
         filter_fn: Optional[Any] = None
     ) -> List[Tuple[MemoryEntry, float]]:
         """Perform cosine similarity top-k search against query vector."""
+        if top_k < 0:
+            raise ValueError("top_k must be non-negative")
         if len(query_vector) != self.dimension:
             raise ValueError(
                 f"Query vector dimension mismatch. Expected {self.dimension}, got {len(query_vector)}"
             )
 
-        if not self.entries:
+        if not np.isfinite(np.asarray(query_vector, dtype=np.float64)).all():
+            raise ValueError("Query vector values must all be finite numbers")
+
+        if not self.entries or top_k == 0:
             return []
 
         self._sync_matrix()
