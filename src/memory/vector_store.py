@@ -13,8 +13,6 @@ class VectorStore:
     """In-memory numpy vector store supporting cosine similarity and top-k retrieval."""
 
     def __init__(self, dimension: int = 128):
-        if dimension < 1:
-            raise ValueError("Vector dimension must be at least 1")
         self.dimension = dimension
         self.entries: Dict[str, MemoryEntry] = {}
         self._matrix: Optional[np.ndarray] = None
@@ -27,8 +25,11 @@ class VectorStore:
             raise ValueError(
                 f"Vector dimension mismatch. Expected {self.dimension}, got {len(entry.vector)}"
             )
-        if not np.isfinite(np.asarray(entry.vector, dtype=np.float64)).all():
-            raise ValueError("Vector values must all be finite numbers")
+        vector = np.asarray(entry.vector, dtype=np.float64)
+        if not np.isfinite(vector).all():
+            raise ValueError("Memory vectors must contain only finite values")
+        if np.linalg.norm(vector) == 0:
+            raise ValueError("Memory vectors must have non-zero magnitude")
         self.entries[entry.entry_id] = entry
         self._dirty = True
 
@@ -52,12 +53,12 @@ class VectorStore:
             return
 
         self._id_index = list(self.entries.keys())
-        raw_vectors = np.array([self.entries[k].vector for k in self._id_index], dtype=np.float32)
+        raw_vectors = np.array([self.entries[k].vector for k in self._id_index], dtype=np.float64)
 
-        # Normalize rows to unit vectors for fast dot product cosine similarity
+        # Normalize rows to unit vectors for fast dot product cosine similarity.
+        # Use float64 for the norm so very small valid embeddings do not underflow.
         norms = np.linalg.norm(raw_vectors, axis=1, keepdims=True)
-        norms[norms == 0] = 1e-10
-        self._matrix = raw_vectors / norms
+        self._matrix = (raw_vectors / norms).astype(np.float32)
         self._dirty = False
 
     def search(
@@ -68,27 +69,24 @@ class VectorStore:
         filter_fn: Optional[Any] = None
     ) -> List[Tuple[MemoryEntry, float]]:
         """Perform cosine similarity top-k search against query vector."""
-        if top_k < 0:
-            raise ValueError("top_k must be non-negative")
         if len(query_vector) != self.dimension:
             raise ValueError(
                 f"Query vector dimension mismatch. Expected {self.dimension}, got {len(query_vector)}"
             )
 
-        if not np.isfinite(np.asarray(query_vector, dtype=np.float64)).all():
-            raise ValueError("Query vector values must all be finite numbers")
-
-        if not self.entries or top_k == 0:
+        if not self.entries:
             return []
 
         self._sync_matrix()
         assert self._matrix is not None
 
-        q = np.array(query_vector, dtype=np.float32)
+        q = np.asarray(query_vector, dtype=np.float64)
+        if not np.isfinite(q).all():
+            raise ValueError("Query vectors must contain only finite values")
         q_norm = np.linalg.norm(q)
         if q_norm == 0:
-            q_norm = 1e-10
-        q_unit = q / q_norm
+            raise ValueError("Query vectors must have non-zero magnitude")
+        q_unit = (q / q_norm).astype(np.float32)
 
         # Cosine similarity is dot product of normalized vectors
         scores = np.dot(self._matrix, q_unit)
