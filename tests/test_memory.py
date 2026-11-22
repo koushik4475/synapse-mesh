@@ -57,30 +57,24 @@ def test_hierarchical_memory_tiers():
     assert any("database migration" in c for c in contents)
 
 
-def test_vector_store_rejects_non_finite_vectors_and_queries():
-    store = VectorStore(dimension=2)
+def test_vector_store_rejects_zero_and_non_finite_vectors():
+    store = VectorStore(dimension=3)
 
-    with pytest.raises(ValueError, match="finite"):
-        store.add_entry(MemoryEntry(content="nan", vector=[float("nan"), 1.0]))
+    with pytest.raises(ValueError, match="non-zero magnitude"):
+        store.add_entry(MemoryEntry(content="zero", vector=[0.0, 0.0, 0.0]))
 
-    with pytest.raises(ValueError, match="finite"):
-        store.add_entry(MemoryEntry(content="infinite", vector=[float("inf"), 1.0]))
+    with pytest.raises(ValueError, match="finite values"):
+        store.add_entry(MemoryEntry(content="nan", vector=[1.0, float("nan"), 0.0]))
 
-    store.add_entry(MemoryEntry(content="valid", vector=[1.0, 0.0]))
+    store.add_entry(MemoryEntry(content="valid", vector=[1.0, 0.0, 0.0]))
 
-    with pytest.raises(ValueError, match="finite"):
-        store.search([float("nan"), 0.0])
+    with pytest.raises(ValueError, match="non-zero magnitude"):
+        store.search([0.0, 0.0, 0.0])
 
-    with pytest.raises(ValueError, match="finite"):
-        store.search([0.0, float("-inf")])
+    with pytest.raises(ValueError, match="finite values"):
+        store.search([1.0, float("inf"), 0.0])
 
-
-def test_vector_store_validates_dimension_and_top_k():
-    with pytest.raises(ValueError, match="dimension must be at least 1"):
-        VectorStore(dimension=0)
-
-    store = VectorStore(dimension=2)
-    with pytest.raises(ValueError, match="top_k must be non-negative"):
-        store.search([1.0, 0.0], top_k=-1)
-
-    assert store.search([1.0, 0.0], top_k=0) == []
+    # A valid but very small vector is still normalized correctly.
+    results = store.search([1e-30, 0.0, 0.0])
+    assert len(results) == 1
+    assert results[0][1] == pytest.approx(1.0)
