@@ -93,3 +93,69 @@ def test_multi_step_dag_agent_execution():
         assert results["step_4_validate"].output["verified_upstream_count"] == 2
 
     asyncio.run(_run())
+
+
+def test_failed_dependency_skips_descendants_and_runs_independent_tasks():
+    async def _run():
+        from src.dag.executor import ParallelDispatchEngine, StepExecutor
+
+        calls = []
+
+        async def fail_handler(node, context):
+            calls.append(node.task_id)
+            raise RuntimeError("simulated failure")
+
+        async def success_handler(node, context):
+            calls.append(node.task_id)
+            return node.task_id
+
+        planner = DAGPlanner(plan_id="failure_propagation")
+        planner.add_node(TaskNode(
+            task_id="root",
+            name="Failing root",
+            action_type="fail",
+            retry_count=0,
+        ))
+        planner.add_node(TaskNode(
+            task_id="child",
+            name="Dependent child",
+            action_type="success",
+            dependencies={"root"},
+        ))
+        planner.add_node(TaskNode(
+            task_id="grandchild",
+            name="Dependent grandchild",
+            action_type="success",
+            dependencies={"child"},
+        ))
+        planner.add_node(TaskNode(
+            task_id="independent",
+            name="Independent task",
+            action_type="success",
+        ))
+
+        engine = ParallelDispatchEngine(
+            planner,
+            StepExecutor({"fail": fail_handler, "success": success_handler}),
+            max_concurrency=2,
+        )
+        results = await engine.run()
+
+        assert results["root"].status == TaskStatus.FAILED
+        assert results["child"].status == TaskStatus.SKIPPED
+        assert results["grandchild"].status == TaskStatus.SKIPPED
+        assert results["independent"].status == TaskStatus.COMPLETED
+        assert "child" not in calls
+        assert "grandchild" not in calls
+        assert "independent" in calls
+
+    asyncio.run(_run())
+
+
+def test_parallel_dispatch_rejects_non_positive_concurrency():
+    from src.dag.executor import ParallelDispatchEngine, StepExecutor
+
+    planner = DAGPlanner()
+    executor = StepExecutor({})
+    with pytest.raises(ValueError, match="max_concurrency must be at least 1"):
+        ParallelDispatchEngine(planner, executor, max_concurrency=0)
